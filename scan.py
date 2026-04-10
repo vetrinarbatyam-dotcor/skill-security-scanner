@@ -21,6 +21,7 @@ import tempfile
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from scanner.skill_validator import validate as skill_validate
 from scanner.static_analyzer import analyze as static_analyze
 from scanner.injection_detector import detect as injection_detect
 from scanner.llm_reviewer import review_with_llm
@@ -73,6 +74,20 @@ Examples:
         sys.exit(1)
 
     print(f"\n🔍 Scanning: {filename} ({len(content)} chars)\n")
+
+    # Layer 0: Validate this is actually a skill/agent
+    print("  [0/4] Skill validation...", end=" ", flush=True)
+    validation = skill_validate(content)
+    if not validation.is_valid:
+        print(f"❌ FAILED")
+        print(f"\n  ❌ שגיאה: {validation.error}\n")
+        for hint in validation.hints:
+            print(f"     💡 {hint}")
+        print()
+        sys.exit(2)
+    type_label = {"skill": "סקיל", "agent": "אייג'נט", "config": "קונפיג"}.get(validation.skill_type, "לא ידוע")
+    conf_pct = int(validation.confidence * 100)
+    print(f"✅ {type_label} (ביטחון: {conf_pct}%)")
 
     # Layer 1: Static Analysis
     print("  [1/4] Static analysis...", end=" ", flush=True)

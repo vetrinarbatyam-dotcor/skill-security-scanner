@@ -868,6 +868,15 @@
                 })
             });
 
+            // Handle validation error (not a skill)
+            if (response.status === 422) {
+                const errData = await response.json();
+                const detail = errData.detail || errData;
+                failLayer(1);
+                showValidationError(detail.message || detail.error, detail.hints || []);
+                return;
+            }
+
             await animateLayer(2);
 
             const data = await response.json();
@@ -907,6 +916,14 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url, skip_llm: !fullScan, skip_sandbox: !fullScan })
             });
+
+            if (response.status === 422) {
+                const errData = await response.json();
+                const detail = errData.detail || errData;
+                failLayer(1);
+                showValidationError(detail.message || detail.error, detail.hints || []);
+                return;
+            }
 
             await animateLayer(2);
             const data = await response.json();
@@ -958,6 +975,52 @@
         icon.textContent = '—';
         status.textContent = 'דולג';
         status.style.color = 'var(--text2)';
+    }
+
+    function failLayer(n) {
+        const item = document.getElementById('layer' + n);
+        const icon = document.getElementById('layer' + n + 'icon');
+        const status = document.getElementById('layer' + n + 'status');
+        item.classList.add('fail');
+        icon.className = 'layer-icon fail';
+        icon.textContent = '✗';
+        status.textContent = 'נכשל';
+        status.style.color = 'var(--danger)';
+        for (let i = n + 1; i <= 4; i++) skipLayer(i);
+    }
+
+    function showValidationError(message, hints) {
+        const section = document.getElementById('resultsSection');
+        let hintsHtml = hints.map(h => {
+            // If it looks like a code example line, style it differently
+            if (h.startsWith('---') || h.startsWith('name:') || h.startsWith('description:') || h === '...') {
+                return `<code style="display:block; background:var(--surface2); padding:2px 10px; font-family:monospace; font-size:13px; color:var(--warn); direction:ltr; text-align:left;">${escapeHtml(h)}</code>`;
+            }
+            return `<li style="margin-bottom:6px;">${escapeHtml(h)}</li>`;
+        }).join('');
+
+        section.innerHTML = `
+            <div class="verdict-card reject animate-in" style="text-align:center;">
+                <div class="verdict-emoji">❌</div>
+                <div class="verdict-text" style="color:var(--danger);">זה לא סקיל</div>
+                <div class="verdict-subtitle" style="margin-top:12px; font-size:16px; color:var(--text);">${escapeHtml(message)}</div>
+                <div style="margin-top:24px; text-align:right; background:var(--surface2); border-radius:var(--radius-sm); padding:20px;">
+                    <h4 style="margin-bottom:12px; font-size:15px;">💡 מה צריך כדי שזה יהיה סקיל?</h4>
+                    <ul style="list-style:none; font-size:14px; color:var(--text2); line-height:1.8;">
+                        ${hintsHtml}
+                    </ul>
+                </div>
+            </div>
+            <button class="reset-btn" onclick="resetScan()">🔄 נסה שוב</button>
+        `;
+        section.classList.add('visible');
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Re-enable button
+        const btn = document.getElementById('scanBtn');
+        btn.disabled = false;
+        btn.classList.remove('scanning');
+        btn.textContent = '🔍 התחל סריקה';
     }
 
     // === Results ===

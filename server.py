@@ -16,6 +16,7 @@ from pydantic import BaseModel
 import uvicorn
 import os
 
+from scanner.skill_validator import validate as skill_validate
 from scanner.static_analyzer import analyze as static_analyze
 from scanner.injection_detector import detect as injection_detect
 from scanner.llm_reviewer import review_with_llm
@@ -61,6 +62,16 @@ def scan_skill(req: ScanRequest):
         raise HTTPException(400, "Content is empty")
     if len(req.content) > 500_000:
         raise HTTPException(400, "Content too large (max 500KB)")
+
+    # Layer 0: Validate this is a skill/agent
+    validation = skill_validate(req.content)
+    if not validation.is_valid:
+        raise HTTPException(422, detail={
+            "error": "not_a_skill",
+            "message": validation.error,
+            "hints": validation.hints,
+            "detected_type": validation.skill_type,
+        })
 
     static_result = static_analyze(req.content)
     injection_result = injection_detect(req.content)
