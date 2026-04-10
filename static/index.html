@@ -598,6 +598,70 @@
             background: var(--accent-glow);
         }
 
+        /* Source code viewer */
+        .code-viewer {
+            display: none;
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .code-viewer.open { display: block; }
+        .code-viewer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 14px;
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text2);
+        }
+        .code-viewer pre {
+            padding: 14px;
+            margin: 0;
+            overflow-x: auto;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #c9d1d9;
+            direction: ltr;
+            text-align: left;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .code-viewer pre .line-num {
+            display: inline-block;
+            width: 35px;
+            text-align: right;
+            margin-left: 12px;
+            color: #484f58;
+            user-select: none;
+        }
+        .code-viewer pre .line-danger {
+            background: rgba(255, 61, 113, 0.1);
+            display: inline;
+        }
+        .view-code-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text2);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 10px;
+        }
+        .view-code-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
         /* Footer */
         .footer {
             text-align: center;
@@ -671,6 +735,7 @@
 
         <div class="tabs">
             <button class="tab active" data-tab="file">📁 העלאת קובץ</button>
+            <button class="tab" data-tab="zip">📦 קובץ ZIP</button>
             <button class="tab" data-tab="paste">📋 הדבקת טקסט</button>
             <button class="tab" data-tab="url">🔗 לינק</button>
         </div>
@@ -687,6 +752,22 @@
                     <span>📄</span>
                     <span id="fileName"></span>
                     <span id="fileSize" style="color: var(--text2)"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ZIP upload -->
+        <div class="tab-content" id="tab-zip">
+            <div class="drop-zone" id="dropZoneZip">
+                <div class="drop-icon">📦</div>
+                <h3>גרור קובץ ZIP לכאן</h3>
+                <p>או לחץ לבחירת קובץ ZIP מהמחשב</p>
+                <p style="margin-top: 8px; font-size: 12px; color: var(--text2);">כל הסקילים שבתוך ה-ZIP ייסרקו אוטומטית (עד 50 קבצים, 10MB)</p>
+                <input type="file" id="zipInput" accept=".zip">
+                <div class="file-badge" id="zipBadge" style="display:none">
+                    <span>📦</span>
+                    <span id="zipName"></span>
+                    <span id="zipSize" style="color: var(--text2)"></span>
                 </div>
             </div>
         </div>
@@ -811,6 +892,32 @@
     });
     fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
 
+    // === ZIP Drag & Drop ===
+    const dropZoneZip = document.getElementById('dropZoneZip');
+    const zipInput = document.getElementById('zipInput');
+    let zipFile = null;
+
+    dropZoneZip.addEventListener('click', () => zipInput.click());
+    dropZoneZip.addEventListener('dragover', e => { e.preventDefault(); dropZoneZip.classList.add('drag-over'); });
+    dropZoneZip.addEventListener('dragleave', () => dropZoneZip.classList.remove('drag-over'));
+    dropZoneZip.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZoneZip.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) handleZipFile(e.dataTransfer.files[0]);
+    });
+    zipInput.addEventListener('change', e => { if (e.target.files.length) handleZipFile(e.target.files[0]); });
+
+    function handleZipFile(file) {
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+            alert('רק קבצי ZIP נתמכים');
+            return;
+        }
+        zipFile = file;
+        document.getElementById('zipBadge').style.display = 'inline-flex';
+        document.getElementById('zipName').textContent = file.name;
+        document.getElementById('zipSize').textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
+    }
+
     function handleFile(file) {
         const reader = new FileReader();
         reader.onload = e => {
@@ -828,13 +935,17 @@
         // Get content from active tab
         const activeTab = document.querySelector('.tab.active').dataset.tab;
 
+        if (activeTab === 'zip') {
+            if (!zipFile) { alert('בחר קובץ ZIP'); return; }
+            return scanZip();
+        }
+
         if (activeTab === 'paste') {
             skillContent = document.getElementById('pasteArea').value;
             skillFilename = 'pasted_skill.md';
         } else if (activeTab === 'url') {
             const url = document.getElementById('urlInput').value.trim();
             if (!url) { alert('הכנס לינק'); return; }
-            // URL will be handled by API
             return scanURL(url);
         }
 
@@ -898,6 +1009,154 @@
             btn.classList.remove('scanning');
             btn.textContent = '🔍 התחל סריקה';
         }
+    }
+
+    async function scanZip() {
+        const btn = document.getElementById('scanBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ סורק ZIP...';
+
+        const progress = document.getElementById('progressSection');
+        progress.classList.add('visible');
+        document.getElementById('resultsSection').classList.remove('visible');
+
+        await animateLayer(1);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', zipFile);
+            formData.append('skip_llm', !fullScan);
+            formData.append('skip_sandbox', !fullScan);
+
+            const response = await fetch(API_BASE + '/scan/zip', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (response.status === 422) {
+                const errData = await response.json();
+                const detail = errData.detail || errData;
+                failLayer(1);
+                showValidationError(detail.message || detail.error, detail.hints || []);
+                return;
+            }
+
+            await animateLayer(2);
+            const data = await response.json();
+
+            if (fullScan) { await animateLayer(3); await animateLayer(4); }
+            else { skipLayer(3); skipLayer(4); }
+
+            setTimeout(() => showZipResults(data), 500);
+        } catch (err) {
+            alert('שגיאה: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '🔍 התחל סריקה';
+        }
+    }
+
+    function showZipResults(data) {
+        const section = document.getElementById('resultsSection');
+        const v = data.overall_verdict;
+        const verdictMap = {
+            SAFE: { emoji: '✅', text: 'כל הסקילים בטוחים', class: 'safe' },
+            REVIEW: { emoji: '⚠️', text: 'חלק מהסקילים דורשים בדיקה', class: 'review' },
+            REJECT: { emoji: '🚫', text: 'נמצאו סקילים מסוכנים!', class: 'reject' },
+            EMPTY: { emoji: '📭', text: 'לא נמצאו סקילים ב-ZIP', class: 'review' },
+        };
+        const vd = verdictMap[v] || verdictMap.REVIEW;
+
+        let html = `
+            <div class="verdict-card ${vd.class} animate-in">
+                <div class="verdict-emoji">${vd.emoji}</div>
+                <div class="verdict-text">${vd.text}</div>
+                <div class="verdict-subtitle">
+                    📦 ${escapeHtml(data.zip_filename)} —
+                    ${data.total_files_found} קבצים נמצאו,
+                    ${data.scanned} נסרקו,
+                    ${data.skipped} דולגו
+                </div>
+            </div>
+        `;
+
+        // Show each scanned file result
+        for (const r of data.results) {
+            const fileVerdict = r.verdict === 'SAFE' ? 'safe' : r.verdict === 'REJECT' ? 'reject' : 'review';
+            const fileEmoji = r.verdict === 'SAFE' ? '✅' : r.verdict === 'REJECT' ? '🚫' : '⚠️';
+            const badgeClass = r.verdict === 'SAFE' ? 'badge-safe' : r.verdict === 'REJECT' ? 'badge-danger' : 'badge-warn';
+            const totalFindings = (r.layers.static_analysis.findings_count || 0) + (r.layers.injection_detection.findings_count || 0);
+
+            let findingsHtml = '';
+            if (totalFindings > 0) {
+                const allFindings = [
+                    ...r.layers.static_analysis.findings.map(f => ({severity: f.severity, desc: translateDesc(f.description), match: f.match})),
+                    ...r.layers.injection_detection.findings.map(f => ({severity: f.severity, desc: translateTechnique(f.technique), match: f.evidence})),
+                ];
+                findingsHtml = allFindings.map(f => `
+                    <div class="finding-item">
+                        <div class="severity-dot ${f.severity}"></div>
+                        <div class="finding-text">
+                            <div class="finding-desc">${f.desc}</div>
+                            ${f.match ? `<div class="finding-evidence">${escapeHtml(f.match)}</div>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                findingsHtml = '<p style="padding:12px 0; color:var(--safe); font-size:14px;">✓ נקי — לא נמצאו ממצאים</p>';
+            }
+
+            html += `
+                <div class="layer-result-card ${totalFindings > 0 ? 'open' : ''} animate-in">
+                    <div class="layer-result-header" onclick="this.parentElement.classList.toggle('open')">
+                        <div class="layer-result-title">
+                            <span>${fileEmoji} ${escapeHtml(r.file)}</span>
+                            <span style="color:var(--text2); font-size:13px; font-weight:400;">ציון: ${r.score}/100</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span class="layer-badge ${badgeClass}">${totalFindings} ממצאים</span>
+                            <span class="expand-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="layer-result-body">
+                        ${findingsHtml}
+                        ${r.source_code ? buildCodeViewer('zip-' + r.file.replace(/[^a-zA-Z0-9]/g, '_'), r.file, r.source_code, r.layers) : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Show skipped files
+        if (data.skipped_files.length > 0) {
+            let skippedHtml = data.skipped_files.map(s => `
+                <div class="finding-item">
+                    <div class="severity-dot low"></div>
+                    <div class="finding-text">
+                        <div class="finding-desc" style="direction:ltr; text-align:left;">${escapeHtml(s.filename)}</div>
+                        <div class="finding-meta">${escapeHtml(s.reason)}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            html += `
+                <div class="layer-result-card animate-in">
+                    <div class="layer-result-header" onclick="this.parentElement.classList.toggle('open')">
+                        <div class="layer-result-title">
+                            <span>⏭️ קבצים שדולגו</span>
+                            <span style="color:var(--text2); font-size:13px;">${data.skipped_files.length} קבצים — לא זוהו כסקילים</span>
+                        </div>
+                        <span class="expand-icon">▼</span>
+                    </div>
+                    <div class="layer-result-body">${skippedHtml}</div>
+                </div>
+            `;
+        }
+
+        html += `<button class="reset-btn" onclick="resetScan()">🔄 סריקה חדשה</button>`;
+
+        section.innerHTML = html;
+        section.classList.add('visible');
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     async function scanURL(url) {
@@ -1129,6 +1388,11 @@
             );
         }
 
+        // Source code viewer
+        if (data.source_code) {
+            html += buildCodeViewer('scanned-source', data.file, data.source_code, data.layers);
+        }
+
         // Explanation section
         html += `
             <div class="explain-section animate-in">
@@ -1214,9 +1478,46 @@
         }
         skillContent = '';
         document.getElementById('fileBadge').style.display = 'none';
+        document.getElementById('zipBadge').style.display = 'none';
+        zipFile = null;
         document.getElementById('pasteArea').value = '';
         document.getElementById('urlInput').value = '';
         window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function buildCodeViewer(id, filename, sourceCode, layers) {
+        // Collect dangerous line numbers
+        const dangerLines = new Set();
+        if (layers) {
+            (layers.static_analysis?.findings || []).forEach(f => dangerLines.add(f.line));
+            (layers.injection_detection?.findings || []).forEach(f => dangerLines.add(f.line));
+        }
+
+        const lines = sourceCode.split('\n');
+        const numberedLines = lines.map((line, i) => {
+            const num = i + 1;
+            const escaped = escapeHtmlCode(line);
+            const isDanger = dangerLines.has(num);
+            return `<span class="line-num">${num}</span>${isDanger ? '<span class="line-danger">' + escaped + '</span>' : escaped}`;
+        }).join('\n');
+
+        return `
+            <button class="view-code-btn" onclick="document.getElementById('cv-${id}').classList.toggle('open'); this.querySelector('.cv-arrow').textContent = document.getElementById('cv-${id}').classList.contains('open') ? '▲' : '▼'">
+                👁️ הצג קוד מקור
+                <span class="cv-arrow">▼</span>
+            </button>
+            <div class="code-viewer" id="cv-${id}">
+                <div class="code-viewer-header">
+                    <span>${escapeHtmlCode(filename)}</span>
+                    <span>${lines.length} שורות · ${sourceCode.length.toLocaleString()} תווים</span>
+                </div>
+                <pre>${numberedLines}</pre>
+            </div>
+        `;
+    }
+
+    function escapeHtmlCode(text) {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function escapeHtml(text) {

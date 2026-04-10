@@ -9,13 +9,14 @@ Endpoints:
     GET  /health       — health check
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 import os
 
+from scanner.zip_handler import extract_skills_from_zip
 from scanner.skill_validator import validate as skill_validate
 from scanner.static_analyzer import analyze as static_analyze
 from scanner.injection_detector import detect as injection_detect
@@ -87,7 +88,9 @@ def scan_skill(req: ScanRequest):
     else:
         sandbox_result = run_in_sandbox(req.content)
 
-    return generate_json_report(req.filename, static_result, injection_result, llm_result, sandbox_result)
+    report = generate_json_report(req.filename, static_result, injection_result, llm_result, sandbox_result)
+    report["source_code"] = req.content
+    return report
 
 
 @app.post("/scan/url")
@@ -104,6 +107,77 @@ def scan_url(req: ScanURLRequest):
     filename = req.url.split("/")[-1] or "remote_skill"
     scan_req = ScanRequest(content=content, filename=filename, skip_llm=req.skip_llm, skip_sandbox=req.skip_sandbox)
     return scan_skill(scan_req)
+
+
+@app.post("/scan/zip")
+async def scan_zip(file: UploadFile = File(...), skip_llm: bool = Form(True), skip_sandbox: bool = Form(True)):
+    """Scan all skill files inside a ZIP archive."""
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(400, "Only .zip files are accepted")
+
+    zip_bytes = await file.read()
+    if len(zip_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(400, "ZIP too large (max 10MB)")
+
+    try:
+        skill_files = extract_skills_from_zip(zip_bytes)
+    except ValueError as e:
+        raise HTTPException(422, detail={"error": "zip_error", "message": str(e), "hints": []})
+
+    results = []
+    skipped = []
+
+    for sf in skill_files:
+        # Validate each file
+        validation = skill_validate(sf['content'])
+        if not validation.is_valid:
+            skipped.append({
+                "filename": sf['filename'],
+                "reason": validation.error,
+                "size": sf['size'],
+            })
+            continue
+
+        # Scan valid skills
+        static_result = static_analyze(sf['content'])
+        injection_result = injection_detect(sf['content'])
+
+        if skip_llm:
+            llm_result = {"overall_risk_score": -1, "summary": "Skipped", "recommendation": "N/A", "findings": []}
+        else:
+            llm_result = review_with_llm(sf['content'])
+
+        if skip_sandbox:
+            from scanner.sandbox_runner import SandboxResult
+            sandbox_result = SandboxResult()
+        else:
+            sandbox_result = run_in_sandbox(sf['content'])
+
+        report = generate_json_report(sf['filename'], static_result, injection_result, llm_result, sandbox_result)
+        report["source_code"] = sf['content']
+        results.append(report)
+
+    # Overall verdict
+    if results:
+        worst_score = min(r['score'] for r in results)
+        if worst_score >= 75:
+            overall = "SAFE"
+        elif worst_score >= 40:
+            overall = "REVIEW"
+        else:
+            overall = "REJECT"
+    else:
+        overall = "EMPTY"
+
+    return {
+        "zip_filename": file.filename,
+        "total_files_found": len(skill_files),
+        "scanned": len(results),
+        "skipped": len(skipped),
+        "skipped_files": skipped,
+        "overall_verdict": overall,
+        "results": results,
+    }
 
 
 if __name__ == "__main__":
