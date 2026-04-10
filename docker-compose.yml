@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  skill-scanner:
+    build: .
+    container_name: skill-scanner
+    restart: unless-stopped
+    ports:
+      - "8990:8990"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # for sandbox layer
+    environment:
+      - PYTHONUNBUFFERED=1
+    mem_limit: 512m
+    cpus: 1.0
